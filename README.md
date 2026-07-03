@@ -12,7 +12,7 @@ This is a pure PowerShell tool. It has **no external dependencies at all**: no P
 
 ## The problem this program solves
 
-Power Query does not refresh itself. To update a report you open the workbook, click **Data -> Refresh All**, wait, and save. With one report that is a minor chore. With ten or a hundred it is a real time sink, it is easy to forget, and it never happens overnight when you would want it to.
+Power Query doesn't refresh itself. To update a report you open the workbook, click **Data -> Refresh All**, wait, and save. With one report that is a minor chore. With ten or a hundred it is a real time sink, it is easy to forget, and it never happens overnight when you would want it to.
 
 This tool does that for you. You point it at a folder and it opens each workbook, refreshes its queries, saves, and moves on, unattended, on whatever schedule you set. It refreshes each query individually so that when one fails (a renamed source column, a missing view, a database error) it tells you **which** query failed and **why**, instead of silently reporting success on stale data. Drop a new workbook into the folder and it is included on the next run; there is nothing to set up per file.
 
@@ -34,13 +34,13 @@ A half-updated report (some tables fresh, one stale, no visible sign which) is w
 
 ### The timeout watchdog runs on its own OS thread, in compiled code
 
-This is the subtle one, and it is specific to doing COM automation from PowerShell.
+This one's specific to doing COM automation from PowerShell, and it's easy to get wrong.
 
-While PowerShell is blocked inside a COM `Refresh()` call waiting on a slow or hung query, **nothing else on that thread runs**. A PowerShell timer, a `Register-ObjectEvent` handler, a `Start-Job` callback, a `Wait` loop: none of them can fire, because they all need the pipeline thread that is currently stuck in the COM call. This is why a naive "start a timer, then refresh" approach cannot actually enforce a timeout. The timer's callback is queued behind the very call it is meant to interrupt.
+While PowerShell is blocked inside a COM `Refresh()` call waiting on a slow or hung query, nothing else on that thread runs. A PowerShell timer, a `Register-ObjectEvent` handler, a `Start-Job` callback, a `Wait` loop: none of them can fire, because they all need the pipeline thread, and that thread is stuck in the COM call. So a naive "start a timer, then refresh" approach can't actually enforce a timeout. The timer's callback just sits queued behind the very call it's supposed to interrupt.
 
-The only thing that can act while the pipeline thread is blocked is a genuinely independent OS thread. So the watchdog is a small compiled type (`Add-Type`, C#) that arms a `System.Threading.Timer`. That timer fires on a thread-pool thread, entirely outside PowerShell's pipeline, and if the timeout elapses it terminates the specific Excel process by PID. The blocked `Refresh()` then throws, the failure is recorded as a timeout, and the run moves to the next workbook.
+The only thing that can act while the pipeline thread is blocked is an independent OS thread. So the watchdog is a small compiled type (`Add-Type`, C#) that arms a `System.Threading.Timer`. That timer fires on a thread-pool thread, outside PowerShell's pipeline entirely, and if the timeout elapses it kills the specific Excel process by PID. The blocked `Refresh()` throws, the failure gets recorded as a timeout, and the run moves to the next workbook.
 
-To kill the **right** Excel and never a user's other spreadsheet, the tool identifies the exact process it launched: it reads `Application.Hwnd` and resolves the owning process id via `GetWindowThreadProcessId` (a two-line P/Invoke in the same compiled type), with a before/after process-snapshot diff as a fallback. A fresh, invisible Excel instance is used per workbook, so one bad file cannot take down the rest of the batch, and after each workbook the COM objects are released and the process is confirmed gone (with a hard `Stop-Process` backstop for the rare case where `Quit()` does not take).
+To kill the right Excel and not some user's other spreadsheet, the tool identifies exactly the process it launched: it reads `Application.Hwnd`, resolves the owning process id via `GetWindowThreadProcessId` (a two-line P/Invoke in the same compiled type), and falls back to a before/after process-snapshot diff if that fails. Each workbook gets its own fresh, invisible Excel instance, so one bad file can't take down the rest of the batch, and after each workbook the COM objects get released and the process gets confirmed gone, with a hard `Stop-Process` backstop for the rare case where `Quit()` doesn't take.
 
 ### The files
 
