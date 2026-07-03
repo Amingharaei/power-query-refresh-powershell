@@ -1,0 +1,13 @@
+# Logs and event output produced by a run.
+*.log
+*.log.*
+refresh-events.csv
+
+# Windows / Office cruft
+~$*
+Thumbs.db
+Desktop.ini
+
+# Editor / IDE
+.vs/
+*.user
